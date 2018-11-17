@@ -1,0 +1,45 @@
+---
+title: "Untitled"
+output: html_document
+---
+ 
+## download csv file in dropbox and load into  
+
+ 
+
+```{r}
+
+# Need to run the download if you did not download the source file from dropbox 
+ #download.file("# Need to run the download if you did not download the source file from dropbox 
+download.file("https://www.dropbox.com/s/g9boi9h61t15q61/FinalProject_House_properties.csv?raw=1", 
+            "FinalProject_House_properties.csv" )
+
+properties <-  read.csv(FinalProject_House_properties.csv)
+str(properties$parcelid)
+```
+
+### load data from sqllit at github 
+
+```{r}
+
+# Need to run the download if you did not download the source file from dropbox 
+download.file("https://www.dropbox.com/s/ne9l87yrzykr85v/Final_house.db?raw=1", 
+               "FinalProject_House.sqlite" )
+
+```
+### read data from sqlite db
+
+```{r}
+#load library
+#install.packages('RSQLite')
+library(RSQLite)
+sqlite <- dbDriver("SQLite")
+conn <- dbConnect(sqlite,"FinalProject_House.sqlite")
+
+# Show all tables avaialbe in the sqllite
+alltables = dbListTables(conn)
+alltables
+# conn 
+```
+
+
