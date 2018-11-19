@@ -1,0 +1,86 @@
+---
+title: "SQLiteToMongoDB"
+output: html_document
+---
+
+For this assignment, you should take information from a relational database and migrate it to a NoSQL database of your own choosing.
+
+For the relational database, you might use the flights database, the tb database, the “data skills” database your team created for Project 3, or another database of your own choosing or creation.
+
+For the NoSQL database, you may use MongoDB (which we introduced in week 7), Neo4j, or another NoSQL database of your choosing.
+
+Your migration process needs to be reproducible. R code is encouraged, but not required. You should also briefly describe the advantages and disadvantages of storing the data in a relational database vs. your NoSQL database.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+load local SQlite DB 
+Load data into data frame and display part of its contents
+ 
+```{r }
+library(RSQLite)
+sqlite <- dbDriver("SQLite")
+conn <- dbConnect(sqlite,"Final_House.db")
+
+# Show all tables avaialbe in the sqllite
+alltables = dbListTables(conn)
+alltables
+```
+ 
+
+```{r}
+train2017Sample<- dbReadTable(conn, "train2017Sample")
+head(train2017Sample)
+
+dbDisconnect(conn)
+```
+
+#prepare local mongodb
+
+```{r}
+
+library(mongolite)
+
+```
+
+```{r}
+mongo.collection <- mongo(collection = "HouseData")
+if (mongo.collection$count()>0)(mongo.collection$drop())
+```
+
+
+
+```{r}
+mongo.collection$insert(train2017Sample)
+```
+
+```{r}
+#install.packages('kableExtra')
+#install.packages('kable')
+ library('kableExtra')
+mongo.list <- mongo.collection$find() 
+kable(head(mongo.list))
+```
+####  SQL vs NoSQL: SQLlite vs MongoDB
+
+SQLite: The SQL Relational Database
+
+Schema: Strict
+Type: RDBMS
+Structure: Table, row, column
+Maturity: Established database - backed with a huge community - somehow stable.
+Scalibility: Vertically scalable
+Cost-effective: Open source and free.
+Replicable: It can be replicated across multiple nodes, meaning that the workload can be reduced and the scalability and availability of the application can be increased.
+Sharding: While sharding cannot be done on most SQL databases, it can be done on SQLite servers. This is both cost-effective and good for business.
+
+MongoDB: The NoSQL - Non-Relational Database
+Type: Document-oriented
+Structure: Collection, document, field
+Scalability: Horizontally scalable reducing the workload and scaling business with ease.
+Manageability: No database administrator needed.
+Cost-effective: Open source and free.
+Speed: High-performance for simple queries.
+Flexibility: JSON based documents. New columns or fields can be added without affecting the existing rows or application performance in general.
