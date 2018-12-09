@@ -1,0 +1,764 @@
+---
+title: "Final_Project"
+output: html_document
+---
+ 
+## download csv file in dropbox and load into  
+
+```{r}
+#install.packages('tidyverse')
+#install.packages("mice") 
+#library(corrplot)
+#library(gridExtra)
+#library(DT)
+#ibrary(leaflet)
+#library(htmltools)
+#install.packages('dplyr')
+#install.packages("magrittr")
+#install.packages("corrplot")
+library(magrittr)
+library(data.table)
+library(bit64)
+library(tidyverse)
+library(lubridate)
+library(mice)
+library(corrplot)
+library(data.table)
+```
+ 
+
+```{r}
+
+# Need to run the download if you did not download the source file from dropbox 
+ #download.file("# Need to run the download if you did not download the source file from dropbox 
+#download.file("https://www.dropbox.com/s/g9boi9h61t15q61/FinalProject_House_properties.csv?raw=1", 
+     #       "FinalProject_House_properties.csv" )
+
+
+```
+```{r}
+properties <- read.csv('FinalProject_House_properties.csv', row.names = NULL)
+ 
+```
+
+
+### load data from sqllit at github 
+
+```{r}
+
+# Need to run the download if you did not download the source file from dropbox 
+download.file("https://www.dropbox.com/s/ne9l87yrzykr85v/Final_house.db?raw=1", 
+               "FinalProject_House.sqlite" )
+
+```
+### read data from sqlite db
+
+```{r}
+#load library
+#install.packages('RSQLite')
+library(RSQLite)
+sqlite <- dbDriver("SQLite")
+conn <- dbConnect(sqlite,"FinalProject_House.sqlite")
+
+# Show all tables avaialbe in the sqllite
+alltables = dbListTables(conn)
+alltables
+
+
+# conn 
+```
+
+
+## Exploring data 
+
+#### load train table 
+
+```{r}
+traindf <- dbGetQuery(conn, "select * from train_2017")
+```
+
+### show sample data
+```{r}
+ 
+str(properties)
+```
+
+
+### Explore dataset
+#### Missing Data 
+
+#### There are two types of missing data:
+MCAR: missing completely at random. This is the desirable scenario in case of missing data.
+MNAR: missing not at random. Missing not at random data is a more serious issue and in this case it might be wise to check the data gathering process further and try to understand why the information is missing. For instance, if most of the people in a survey did not answer a certain question, why did they do that? Was the question unclear?
+Assuming data is MCAR, too much missing data can be a problem too. Usually a safe maximum threshold is 5% of the total for large datasets. If missing data for a certain feature or sample is more than 5% then you probably should leave that feature or sample out. We therefore check for features (columns) and samples (rows) where more than 5% of the data is missing using a simple function
+```{r}
+ # classification of missing data
+pMiss <- function(x){sum(is.na(x))/length(x)*100}
+missing.bycol <- apply(properties,2,pMiss)
+missing.byrow <-  apply(properties,1,pMiss)
+
+```
+ 
+ 
+
+```{r}
+
+library("data.table")
+
+missdata.df <- as.data.frame(missing.bycol)
+setDT(missdata.df, keep.rownames = TRUE)
+names(missdata.df) <- c('Col_Names', 'pct_missing')
+
+
+g<-ggplot(data = missdata.df , aes(x= reorder(Col_Names, pct_missing), y=pct_missing)) + geom_bar(stat = "identity",aes(fill = pct_missing), position = position_stack(reverse= TRUE)) + coord_flip()
+g
+```
+ 
+
+```{r}
+#visulization the columns more than 20% missing value
+#head(missdata.df)
+missdata.df20 <- missdata.df %>% filter (pct_missing>=20) 
+g1<-ggplot(data = missdata.df20  , aes(x= reorder(Col_Names, pct_missing), y=pct_missing)) + geom_bar(stat = "identity",aes(fill = pct_missing), position = position_stack(reverse= TRUE)) + coord_flip()
+g1
+```
+####  In metabolomics, missing values that exist in more than 20% of samples may be removed from the data, which is called “80% rule”
+```{r}
+# remove variables with missing > 20% 
+mis_prop <- sapply(properties, function(x) sum(is.na(x))/length(x))
+var_rm <- names(mis_prop)[mis_prop > 1 - 0.8]
+var_rm 
+
+```
+
+```{r}
+miss_rate <- as.data.frame(unlist(mis_prop), stringsAsFactors=FALSE)
+
+miss_rate <- setDT(miss_rate, keep.rownames = TRUE)[]
+names(miss_rate) <- c('ColName', "Missing_Perc")
+miss_rate[order(miss_rate$Missing_Perc),]
+```
+
+
+```{r}
+df_rm_na <-properties[, !colnames(properties) %in% var_rm]
+
+dim(df_rm_na)
+str(df_rm_na)
+```
+
+
+#### load train data from sqlite db 
+```{r}
+target_df <- merge.data.frame(traindf, df_rm_na,by="parcelid")
+```
+
+```{r}
+str(target_df)
+```
+
+## Deal with missing value and add feature
+
+```{r}
+# life of property
+summary(target_df$yearbuilt)
+
+# Draw with black outline, white fill
+#ggplot(dat, aes(x=yearbuilt)) +
+#    geom_histogram(binwidth=.5, colour="black", fill="white")
+
+### fill NA with median number 
+target_df$yearbuilt[is.na(target_df$yearbuilt)]<-median(target_df$yearbuilt,na.rm=T)
+```
+
+
+```{r}
+summary(target_df$yearbuilt)
+```
+### convert Non numeric columns to such as propertylandusetypeid , fips to category data
+```{r}
+target_df$propertylandusetypeid<-factor(target_df$propertylandusetypeid)
+target_df$fips <- factor (target_df$fips)
+```
+
+### deal with data with  yes or no answers columns
+
+```{r}
+
+flagColClean <- function(emp)
+{  emp<- as.character(emp)
+if (emp=="NA"  | emp =="")
+{
+   
+    return (-1)
+}
+
+else 
+{
+    return (1)
+}
+
+}
+
+target_df$fireplaceflag<- sapply( target_df$fireplaceflag, flagColClean)
+target_df$fireplaceflag<- factor( target_df$fireplaceflag )
+g3 <-  ggplot(target_df, aes(fireplaceflag)) +geom_bar()
+g3
+
+ 
+```
+
+```{r}
+flagcol <- target_df %>% select (contains('flag'))
+summary(flagcol)
+target_df$taxdelinquencyflag<- sapply( target_df$taxdelinquencyflag, flagColClean)
+target_df$taxdelinquencyflag<- factor( target_df$taxdelinquencyflag )
+g4 <-  ggplot(target_df, aes(taxdelinquencyflag)) +geom_bar(aes(fill=taxdelinquencyflag))
+g4
+```
+
+
+
+### deal with date data (Extract Month from date and convert to factor variable)
+```{r}
+target_df$transactionMonth <- as.factor (month(as.POSIXlt(
+  target_df$transactiondate, format="%Y-%m-%d")))
+ 
+```
+ 
+ 
+### visualize tax related columns
+```{r}
+
+## check the relationship between tax releated variables 
+tax<- data.frame(cbind(target_df$landtaxvaluedollarcnt,target_df$structuretaxvaluedollarcnt,
+                       target_df$taxvaluedollarcnt,target_df$taxamount))
+corrplot(cor(tax, use="complete.obs"), type="lower")
+
+#corrplot(cor(tax, use="complete.obs"), type="lower")
+ 
+```
+
+
+
+#### get unique value per parceid 
+
+
+```{r}
+## extact numeric volue data
+target_df <- target_df %>% distinct( parcelid  , .keep_all = TRUE)
+rownames(target_df) <- target_df$parcelid
+target_df <- target_df [,-1]
+
+```
+
+
+```{r}
+summary(target_df$logerror)
+```
+
+
+```{r}
+#remove columns with NA
+target_df2 <- target_df[complete.cases(target_df), ]
+summary(target_df2)
+```
+ 
+ 
+ 
+```{r}
+### assessmentyear is constant variable , remove from the dataset 
+  target_df2 <- target_df2 %>% select (-contains('assessmentyear'))
+```
+
+ 
+```{r}
+ # Add Feature
+    #
+    # life of property
+   target_df2$N.HousYear = 2018 -target_df2$yearbuilt
+
+  # target_df2$N.calculatedfinishedsquarefeet =target_df2$finishedsquarefeet12 
+
+    # error in calculation of the finished living area of home
+   #target_df2$N.LivingAreaError =target_df2$calculatedfinishedsquarefeet /target_df2$finishedsquarefeet12
+
+    # proportion of living area
+   target_df2$N.LivingAreaProp =target_df2$calculatedfinishedsquarefeet /target_df2$lotsizesquarefeet
+
+    # Amout of extra space
+   target_df2$N.ExtraSpace =target_df2$lotsizesquarefeet -target_df2$calculatedfinishedsquarefeet
+  
+    # Total number of bed rooms
+   target_df2$N.TotalRooms =target_df2$bathroomcnt +target_df2$bedroomcnt
+
+    # Average room size
+    target_df2$N.AvRoomSize  =target_df2$calculatedfinishedsquarefeet/target_df2$N.TotalRooms
+
+    # Number of Extra rooms
+   target_df2$N.ExtraRooms =target_df2$roomcnt -target_df2$N.TotalRooms
+
+    # Ratio of the built structure value to land area
+   target_df2$N.ValueProp =target_df2$structuretaxvaluedollarcnt /target_df2$landtaxvaluedollarcnt
+```
+
+
+```{r}
+### Deal with latitude and longitude data 
+ target_df2$latitude = as.numeric(target_df2$latitude)
+ target_df2$longitude= as.numeric(target_df2$longitude)
+   target_df2$N.location  = target_df2$latitude +target_df2$longitude 
+   target_df2$N.location2  = as.numeric(target_df2$latitude/target_df2$longitude )
+    #properties $N-location-2round  =target_df $N-location-2 .round(-4)
+
+    # Ratio of tax of property over parcel
+   target_df2$N.ValueRatio  =target_df2$taxvaluedollarcnt /target_df2$taxamount 
+
+    # TotalTaxScore
+   target_df2$N.TaxScore  =target_df2$taxvaluedollarcnt*target_df2$taxamount 
+
+    # polnomials of tax delinquency year
+  # target_df$N.taxdelinquencyyear2 =target_df$taxdelinquencyyear ** 2
+  # target_df$N.taxdelinquencyyear3 =target_df$taxdelinquencyyear  ** 3
+
+    # Length of time since unpaid taxes
+  # target_df$N.live = 2018 -target_df$taxl
+  #Number oftarget_df in the city
+   city_count  <-  count(target_df2, regionidcity)
+    names(city_count) <- c('regionidcity','City_Count')
+  # city_countc
+  target_df2<-merge(x=target_df2,y=city_count,by="regionidcity" ,all=TRUE)
+
+  
+#   target_df$N.city_count <-  count ( target_df, target_df$regionidcity)
+  # target_df$N.city_count  =target_df$regionidcity.map(city_count)
+
+ # Number of propertities in the county
+  
+ county_count  <-  count(target_df2, regionidcounty)
+names(county_count) <- c('regionidcounty','County_Count')
+  # city_countc
+  target_df2<-merge(x=target_df2,y=county_count,by="regionidcounty" ,all=TRUE)
+ 
+   # Number of properties in the zip
+ 
+zip_count  <-  count(target_df2, regionidzip)
+names(zip_count) <- c('regionidzip','Zip_Count')
+target_df2<-merge(x=target_df2,y= zip_count  ,by="regionidzip" ,all=TRUE)
+
+ 
+
+```
+
+
+ 
+
+
+#### Finalize features 
+ 
+```{r}
+## remove columns with free text 
+target_df2<- target_df2 %>% select (-contains('propertyzoningdesc'), -contains('itude'), -starts_with('year'),-contains('itude'), -contains('rowcensus'),-contains('transactiondate'), -contains('regionid'), -contains('assessmentyear'))  
+## list all datatype of datafame 
+split(names(target_df2),sapply(target_df2, function(x) paste(class(x), collapse=" ")))
+
+```
+ 
+### Normalize Numeric Data 
+
+```{r} 
+
+normfun <- function(x) (x - min(x))/(max(x)-min(x))
+
+numcol <- sapply(target_df2,is.numeric) 
+numcol['logerror'] <- FALSE
+numcol ['rawcensustractandblock']
+numcol
+numcol_df<- as.data.frame(numcol)
+numcol_df <- setDT(numcol_df, keep.rownames = TRUE)[]
+names(numcol_df) <- c ("ColName","IsNumeric")
+Numeric_col <- numcol_df %>% filter (IsNumeric==TRUE)
+Numeric_col <- Numeric_col$ColName
+
+for (i in Numeric_col)
+{
+   
+    {target_df2[i] <- lapply(target_df2[i], normfun)}
+  
+}
+  
+
+```
+
+
+
+### deal with categorical data 
+
+```{r}
+levels(target_df2$fips)
+```
+
+
+```{r}
+### change fips categor dota to numeric value 
+#summary(target_df2$fips)
+target_df2$fips = as.numeric(factor(target_df2$fips, 
+                                      levels = c("6037", "6059" ,"6111"),
+                                      labels = c(1, 2, 3)))
+ 
+```
+
+```{r}
+summary(target_df2$fips)
+```
+
+```{r}
+
+levels(target_df2$hashottuborspa)
+target_df2$hashottuborspa = as.numeric(factor(target_df2$hashottuborspa, 
+                                      levels = c(""   ,  "true"),
+                                      labels = c(-1, 1)))
+ 
+
+```
+```{r}
+summary(target_df2$hashottuborspa)
+```
+
+### convert propertycountylandusecode
+
+```{r}
+summary(target_df2$propertycountylandusecode)
+```
+
+###  deal with some categorical variables with multiple levels
+```{r}
+landCodeClean <- function(emp)
+{  emp<- as.character(emp)
+if (emp=="0100" )
+{
+   
+    return (1)
+}
+
+else if (emp=="22") 
+{
+    return (2)
+}
+
+else if (emp=="010C") 
+{
+    return (3)
+}
+else 
+{
+  return (4)
+}
+
+}
+
+
+
+target_df2$propertycountylandusecode<- sapply( target_df2$propertycountylandusecode, landCodeClean)
+target_df2$propertycountylandusecode<- factor(target_df2$propertycountylandusecode )
+
+
+
+
+```
+
+```{r}
+
+g5 <-  ggplot(target_df2, aes(propertycountylandusecode)) +geom_bar()
+g5
+summary(target_df2$propertycountylandusecode)
+```
+
+ 
+
+```{r}
+summary(target_df2$propertylandusetypeid )
+```
+
+```{r}
+propertypeClean <- function(emp)
+{  emp<- as.character(emp)
+if (emp=="261" )
+{
+   
+    return (1)
+}
+
+else if (emp=="266") 
+{
+    return (2)
+}
+
+else if (emp=="269") 
+{
+    return (3)
+}
+else 
+{
+  return (4)
+}
+
+}
+
+
+target_df2$propertylandusetypeid<- sapply( target_df2$propertylandusetypeid, propertypeClean)
+target_df2$propertylandusetypeid<- factor( target_df2$propertylandusetypeid )
+
+```
+
+```{r}
+g5 <-  ggplot(target_df2, aes(propertylandusetypeid)) +geom_bar()
+g5
+```
+
+
+```{r}
+
+### Finalized_dataset 
+dataset <- target_df2
+
+dim(dataset)
+#dataset$propertycountylandusecode <- as.numeric(dataset$propertycountylandusecode)
+#dataset$propertylandusetypeid <- as.numeric(dataset$propertylandusetypeid)
+#dataset$fireplaceflag <- as.numeric(dataset$fireplaceflag)
+#dataset$taxdelinquencyflag <- as.numeric(dataset$taxdelinquencyflag)
+#dataset$transactionMonth <- as.numeric(dataset$tra)
+
+```
+```{r}
+str(dataset)
+```
+
+
+
+##  USE H2O Analysis dataset 
+#### h2o pakage : H2O is a powerful and efficient java-based interface that allows for local and cluster-based deployment. 
+ * Stochastic GBM with column and row sampling (per split and per tree) for better generalization.
+ * Support for exponential families (Poisson, Gamma, Tweedie) and loss functions in addition to binomial (Bernoulli), Gaussian and   multinomial distributions, such as Quantile regression (including Laplace).
+ * Grid search for hyperparameter optimization and model selection.
+
+```{r}
+#install.packages('h2o')
+######################################
+# Setup h2o
+######################################
+library(h2o)
+h2o.init(nthreads = -1, max_mem_size = "8g")
+
+
+ 
+###  split dataset  Best approach by using the Gridsearch  (Skipped in the project )
+
+datah2o <- as.h2o(dataset)
+splits <- h2o.splitFrame(data = datah2o, 
+                         ratios = c(0.7, 0.15),  #
+                         seed = 1)  #setting a seed will guarantee reproducibility
+train <- splits[[1]]
+valid <- splits[[2]]
+test <- splits[[3]]
+
+
+# Identify predictors and response
+x <- names(train)[which(names(train)!="logerror")]
+y <- "logerror"
+print(x)
+
+```
+
+```{r}
+## Show the dataset 
+nrow(train)  # 114908
+nrow(valid) # 24498
+nrow(test)  # 24581
+```
+
+#### Basic implementation by using default parameter  
+From H2O.ai.com 
+Gradient Boosting Machine (GBM model ) Gradient Boosting Machine (for Regression and Classification) is a forward learning ensemble method. The guiding heuristic is that good predictive results can be obtained through increasingly refined approximations. H2O’s GBM sequentially builds regression trees on all the features of the dataset in a fully distributed way - each tree is built in parallel.
+
+ 
+#### Because of the combinatorial explosion, each additional hyperparameter that gets added to our grid search has a huge effect on the time to complete. Consequently, h2o provides an additional grid search path called “RandomDiscrete”, which will jump from one random combination to another and stop once a certain level of improvement has been made, certain amount of time has been exceeded, or a certain amount of models have been ran (or a combination of these have been met).
+
+
+
+```{r}
+gbm.fit <- h2o.gbm(
+  x = x,
+  y = y,
+  training_frame = train,
+  nfolds = 5,
+  ntrees = 5000,
+  stopping_rounds = 10,
+  stopping_tolerance = 0,
+  seed = 123
+)
+```
+```{r}
+h2o.varimp_plot(gbm.fit , num_of_features = 15) 
+h2o.mae(gbm.fit)
+```
+
+
+#### Tuning of the model 
+ 
+Tree complexity:ntrees: number of trees to train
+max_depth: depth of each tree
+min_rows: Fewest observations allowed in a terminal node
+Learning rate: 
+learn_rate: rate to descend the loss function gradient
+learn_rate_annealing: allows you to have a high initial learn_rate, then gradually reduce as trees are added (speeds up training).
+Adding stochastic nature:
+sample_rate: row sample rate per tree
+col_sample_rate: column sample rate per tree (synonymous with xgboost’s colsample_bytree)
+
+```{r}
+# random grid search criteria
+search_criteria <- list(
+  strategy = "RandomDiscrete",
+  stopping_metric = "mse",
+  stopping_tolerance = 0.005,
+  stopping_rounds = 10,
+  max_runtime_secs = 60*60
+  )
+
+# perform grid search 
+grid <- h2o.grid(
+  algorithm = "gbm",
+  grid_id = "gbm_grid2",
+  x = x, 
+  y = y, 
+  training_frame = train,
+  validation_frame = valid,
+  hyper_params = hyper_grid,
+  search_criteria = search_criteria, # add search criteria
+  ntrees = 5000,
+  stopping_rounds = 10,
+  stopping_tolerance = 0,
+  seed = 123
+  )
+
+# collect the results and sort by our model performance metric of choice
+grid_perf <- h2o.getGrid(
+  grid_id = "gbm_grid2", 
+  sort_by = "mse", 
+  decreasing = FALSE
+  )
+grid_perf
+```
+
+
+#### choose best paramters 
+
+```{r}
+best_model_id <- grid_perf@model_ids[[1]]
+best_model <- h2o.getModel(best_model_id)
+h2o.performance(model = best_model, valid = TRUE)
+```
+
+```{r}
+grid_summary <- grid_perf@summary_table
+grid_summary 
+```
+```{r}
+# train final model
+h2o.final <- h2o.gbm(
+  x = x,
+  y = y,
+  training_frame = train,
+  nfolds = 5,
+  ntrees = 10000,
+  learn_rate = 0.05,
+  learn_rate_annealing = 0.99,
+  max_depth = 5,
+  min_rows = 10,
+  sample_rate = 0.75,
+  col_sample_rate = 1,
+  stopping_rounds = 10,
+  stopping_tolerance = 0,
+  seed = 123
+)
+
+```
+
+
+```{r}
+
+###final number of Trees
+h2o.final@parameters$ntrees
+```
+
+
+```{r}
+### MAE score
+h2o.mae(h2o.final, xval = TRUE)
+```
+
+
+```{r}
+
+### check model performance 
+
+h2o.performance(model =best_model , newdata = as.h2o(test))
+```
+### Visualizing 
+Variable importance
+
+After re-running our final model we likely want to understand the variables that have the largest influence on sale price.
+
+
+```{r}
+h2o.varimp_plot(h2o.final, num_of_features = 15)
+
+```
+
+
+We can now apply to our two observations. The results show the predicted value, local model fit (both are relatively poor), and the most influential variables driving the predicted value for each observation.
+We used LIME function (LIME is a newer procedure for understanding why a prediction resulted in a given value for a single observation.)
+We can now apply to our two observations. The results show the predicted value (Case 1: 0.0141, Case 2: 0.00997). 
+
+```{r}
+#install.packages('lime')
+
+ 
+library(lime)
+local_obs <- as.data.frame(test[1:2, ])
+local_obs$logerror
+explainer <- lime(as.data.frame(train), h2o.final)
+explanation <- explain(local_obs, explainer, n_features = 5)
+plot_features(explanation)
+```
+
+
+
+### redicting
+
+Variable importance
+h2o provides a built function that plots variable importance. It only has one measure of variable importance, relative importance, which measures the average impact each variable has across all the trees on the loss function
+
+```{r}
+h2o.performance(model = h2o.final, newdata = as.h2o(test))
+```
+```{r}
+# predict with h2o.predict
+#h2o.predict(h2o.final, newdata = as.h2o(test))
+```
+
+ 
+ ###  
+ GBMs are one of the most powerful ensemble algorithms that are often first-in-class with predictive accuracy. The current model provide MAE score is close to other models published on the website . It can be further improved with grid-search and ensemble method.  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
